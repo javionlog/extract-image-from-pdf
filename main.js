@@ -1,7 +1,6 @@
 import './style.css'
-const pdfjs = await import('pdfjs-dist/build/pdf')
-const pdfjsWorker = await import('pdfjs-dist/build/pdf.worker.entry')
-pdfjs.GlobalWorkerOptions.workerSrc = pdfjsWorker
+import * as pdfjs from 'pdfjs-dist'
+pdfjs.GlobalWorkerOptions.workerSrc = './node_modules/pdfjs-dist/build/pdf.worker.mjs'
 
 document.querySelector('#app').innerHTML = `
 <input id="file" type="file" />
@@ -60,50 +59,37 @@ const converter = file => {
   }
 }
 
-const getTextList = (doc, pageNum) => {
-  return new Promise(async resolve => {
-    const page = await doc.getPage(pageNum)
-    const text = await page.getTextContent()
-    resolve(text)
-  })
+const getTextList = async (doc, pageNum) => {
+  const page = await doc.getPage(pageNum)
+  const text = await page.getTextContent()
+  return text
 }
 
-const getImageList = (doc, pageNum) => {
+const getImageList = async (doc, pageNum) => {
   let imgList = []
-  return new Promise(async resolve => {
-    const page = await doc.getPage(pageNum)
-    const operators = await page.getOperatorList()
-    const rawImgOperatorList = operators.fnArray
-      .map((f, i) => {
-        return f === pdfjs.OPS.paintImageXObject ? i : null
-      })
-      .filter(n => n !== null)
-    for (const operator of rawImgOperatorList) {
-      const filename = operators.argsArray[operator][0]
+  const page = await doc.getPage(pageNum)
+  const operators = await page.getOperatorList()
+  const rawImgOperatorList = operators.fnArray
+    .map((f, i) => {
+      return f === pdfjs.OPS.paintImageXObject ? i : null
+    })
+    .filter(n => n !== null)
+  for (const operator of rawImgOperatorList) {
+    const filename = operators.argsArray[operator][0]
+    await new Promise(resolve => {
       page.objs.get(filename, async arg => {
-        const canvas = document.createElement('canvas')
-        canvas.width = arg.width
-        canvas.height = arg.height
-        const ctx = canvas.getContext('2d')
-        const typedArray = new Uint8ClampedArray(arg.width * arg.height * 4)
-        let k = 0
-        let i = 0
-        while (i < arg.data.length) {
-          typedArray[k] = arg.data[i] // r
-          typedArray[k + 1] = arg.data[i + 1] // g
-          typedArray[k + 2] = arg.data[i + 2] // b
-          typedArray[k + 3] = 255 // a
-
-          i += 3
-          k += 4
-        }
-        const imgData = ctx.createImageData(arg.width, arg.height)
-        imgData.data.set(typedArray)
-        ctx.putImageData(imgData, 0, 0)
-        const url = canvas.toDataURL('image/png', 1)
+        const bitmap = arg.bitmap
+        const width = bitmap.width
+        const height = bitmap.height
+        const canvas = new OffscreenCanvas(width, height)
+        const ctx = canvas.getContext('bitmaprenderer')
+        ctx.transferFromImageBitmap(bitmap)
+        const blob = await canvas.convertToBlob()
+        const url = URL.createObjectURL(blob)
         imgList.push(url)
+        resolve()
       })
-    }
-    resolve(imgList)
-  })
+    })
+  }
+  return imgList
 }
